@@ -2,7 +2,7 @@
 (function() {
     'use strict';
 
-    const VER = "claude-ctm-v1.2";
+    const VER = "v0.16_simple";
 
     // ============================================================
     // スクレイプ用ユーティリティ
@@ -128,12 +128,14 @@
     }
 
     function saveBlob(content, name, type) {
-        const blob = new Blob([content], { type });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = name; a.style.display = 'none';
-        document.body.appendChild(a); a.click();
-        setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 200);
+        return new Promise(resolve => {
+            const blob = new Blob([content], { type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = name; a.style.display = 'none';
+            document.body.appendChild(a); a.click();
+            setTimeout(() => { a.remove(); URL.revokeObjectURL(url); resolve(); }, 400);
+        });
     }
 
     // 会話MD文字列を生成
@@ -192,51 +194,14 @@
             saveBlob(buildChatMD(), `${base}.md`, 'text/markdown');
         });
 
-        // --- MD+ZIP: 会話MD・アップロード内包MDを保存し、ZIP生成プロンプトを送信 ---
+        // --- MD+ZIP: 会話MDを保存し、ZIP生成プロンプトを送信 ---
         createBtn('MD+ZIP', '#2980b9', () => {
             const base = getFileNameBase();
+            const runSequence = async () => {
+            // 1. 会話MD（MDボタンと同じ）
+            await saveBlob(buildChatMD(), `${base}.md`, 'text/markdown');
 
-            // 1. 会話MD
-            saveBlob(buildChatMD(), `${base}.md`, 'text/markdown');
-
-            // 2. アップロード内包MD（テキスト系添付）
-            const TEXT_EXTS = new Set([
-                'md','txt','json','js','ts','jsx','tsx','py','rb','go','rs',
-                'java','c','cpp','h','hpp','cs','php','swift','kt','sh','bash',
-                'zsh','fish','html','htm','css','scss','sass','less','xml','yaml',
-                'yml','toml','ini','cfg','conf','env','sql','graphql','r','m',
-                'ipynb','csv','tsv','log'
-            ]);
-            const getExt = (fn) => { const m = fn.match(/\.([a-zA-Z0-9]+)$/); return m ? m[1].toLowerCase() : ''; };
-            let uploadsMD = getHeaderText() + '---\n\n# アップロード/ペースト テキストファイル内包\n';
-            let hasAttach = false;
-            const seenAttach = new Set();
-            document.querySelectorAll('[data-testid="file-thumbnail"]').forEach(thumb => {
-                const h3 = thumb.querySelector('h3');
-                const fname = h3 ? h3.textContent.trim() : '';
-                if (!fname || !TEXT_EXTS.has(getExt(fname))) return;
-                if (seenAttach.has(fname)) return;
-                seenAttach.add(fname);
-                hasAttach = true;
-                let content = null;
-                const msgEl = thumb.closest('[data-testid="user-message"]') ||
-                              thumb.closest('[class*="message"]') || thumb.parentElement;
-                if (msgEl) {
-                    const pre = msgEl.querySelector('pre, code, textarea, [class*="file-content"], [class*="fileContent"]');
-                    if (pre) content = pre.textContent.trim();
-                }
-                uploadsMD += `\n\n---\n## ${fname}\n\n`;
-                if (content) {
-                    uploadsMD += `\`\`\`${getExt(fname)}\n${content}\n\`\`\`\n`;
-                } else {
-                    uploadsMD += `> ※内容はDOM上に展開されていないため取得できませんでした。\n`;
-                }
-            });
-            if (hasAttach) {
-                saveBlob(uploadsMD, `${base}_uploads.md`, 'text/markdown');
-            }
-
-            // 3. ZIP生成プロンプトを送信
+            // 2. ZIP生成プロンプトを送信             // 3. ZIP生成プロンプトを送信
             const prompt =
                 `このセッションのファイルを2つのZIPにまとめてダウンロードしてください。\n\n` +
                 `1. アップロードしたファイルとペーストしたファイルの実体を「${base}_uploads.zip」という名前のZIPに。\n` +
@@ -262,6 +227,8 @@
                 }, 300);
             }
             navigator.clipboard.writeText(prompt).catch(() => {});
+            };
+            runSequence();
         });
 
         // --- ガード ON/OFF トグル ---
