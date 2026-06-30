@@ -1,16 +1,24 @@
 {
   "manifest_version": 3,
   "name": "claude-chat-to-markdown",
-  "version": "1.3.0",
-  "description": "Claude.ai 専用の会話保存＋誤送信防止ツール。MD/MD+ZIPボタンで会話とアップロード/生成ファイルを保全し、Ctrl+Enterで境界封印を注入して誤送信を防ぎます。",
-  "permissions": ["storage", "tabs", "downloads"],
+  "version": "1.5.0",
+  "description": "Claude.ai 専用の会話保存＋誤送信防止ツール。MDボタンで逐語の会話MDを保存、MD+ZIPボタンで会話＋全ファイル内容を埋め込んだ自己完結ログをClaudeに生成させ、Ctrl+Enterで誤送信を防ぎます。",
+  "permissions": [
+    "storage",
+    "tabs",
+    "downloads"
+  ],
   "action": {
     "default_title": "claude-chat-to-markdown ON/OFF"
   },
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
-      "js": ["content.js"]
+      "matches": [
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "content.js"
+      ]
     }
   ],
   "background": {

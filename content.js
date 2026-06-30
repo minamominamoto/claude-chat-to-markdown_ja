@@ -2,7 +2,7 @@
 (function() {
     'use strict';
 
-    const VER = "v0.16_simple";
+    const VER = "v0.18_no_nest";
 
     // ============================================================
     // スクレイプ用ユーティリティ
@@ -197,15 +197,89 @@
         // --- MD+ZIP: 会話MDを保存し、ZIP生成プロンプトを送信 ---
         createBtn('MD+ZIP', '#2980b9', () => {
             const base = getFileNameBase();
-            const runSequence = async () => {
-            // 1. 会話MD（MDボタンと同じ）
-            await saveBlob(buildChatMD(), `${base}.md`, 'text/markdown');
+            const elements = scanConversation();
+            const ordered = sortByDOMOrder(elements.filter(r => r.text.length >= 5));
 
-            // 2. ZIP生成プロンプトを送信             // 3. ZIP生成プロンプトを送信
+            // 逐語会話とファイル名リスト
+            const conversation = ordered
+                .filter(r => r.role === 'User' || r.role === 'Model')
+                .map(r => ({ role: r.role, text: r.text }));
+            const fileSet = new Set();
+            ordered.filter(r => r.role === 'File').forEach(r => fileSet.add(r.text));
+            // このスクリプト自身が生成したファイル（多重ネスト防止）を除外
+            const isSelfGenerated = (n) => /(_uploads\.zip|_downloads\.zip|_record\.md|_story\.md|_session\.json)$/.test(n);
+            const files = Array.from(fileSet).filter(n => !isSelfGenerated(n));
+
+            // 生DOM（照合用）
+            const main = document.querySelector('main') || document.body;
+            const rawDOM = main ? main.innerHTML : '';
+
+            const instruction =
+                'これは過去のClaudeセッションの記録です。目的は、後でLLMがこのファイル1つを参照すれば経緯を正確に把握でき、' +
+                '人間が読んでも他のファイルを開かずに完結する「自己完結した正確なログ」を作ることです。\n\n' +
+                '入力は2つ。(A) conversation = 拡張機能が抽出した逐語の対話。(B) rawDOM = 同じセッションの生DOM（照合・補完用）。\n\n' +
+                '【最重要原則】対話部分は要約・整形・改変を一切しない。conversationの文言をそのまま使い、rawDOMで取りこぼし（コードブロック・リスト・数式など）があれば補完する。あなたの言葉で言い換えない。\n\n' +
+                '以下の3つを生成し、すべて present_files でダウンロードできる形で出力してください。\n\n' +
+                '【1. 記録版Markdown（' + base + '_record.md）】' +
+                '逐語の対話を時系列でそのまま記録する。filesに挙がった各ファイル（アップロード・生成の両方）の内容を、該当箇所にコードブロックで埋め込む。' +
+                'ただしこの拡張機能が過去に生成したファイル（末尾が _uploads.zip / _downloads.zip / _record.md / _session.json）は中身を展開せず、名前の言及のみとする（多重ネスト防止）。' +
+                'テキストはそのまま、200KB超は先頭10行のみ、zipは展開してテキストのみ、mhtmlは除外。これ1ファイルで対話とファイル内容が完結するようにする。\n\n' +
+                '【2. ' + base + '_uploads.zip】このセッションでアップロード/ペーストされたファイルの実体をまとめる。\n\n' +
+                '【3. ' + base + '_downloads.zip】あなたがこのセッションで生成したファイルの実体をまとめる。';
+            const sessionJSON = JSON.stringify({ instruction, session: base, files, conversation, rawDOM }, null, 2);
+
+            const runSequence = async () => {
+                // 1. 会話MD保存（逐語・拡張機能完結）
+                await saveBlob(buildChatMD(), `${base}.md`, 'text/markdown');
+
+                // 2. セッションJSONをClaudeの入力欄にアップロード
+                const jsonFile = new File([sessionJSON], `${base}_session.json`, { type: 'application/json' });
+                const dt = new DataTransfer();
+                dt.items.add(jsonFile);
+                const fileInput = document.querySelector('input[type="file"]');
+                if (fileInput) {
+                    fileInput.files = dt.files;
+                    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+                } else {
+                    await saveBlob(sessionJSON, `${base}_session.json`, 'application/json');
+                    alert('ファイル入力欄が見つかりませんでした。ダウンロードしたsession.jsonを手動でアップロードしてください。');
+                    return;
+                }
+
+                // 3. プロンプト送信（ファイル添付を待ってから）
+                const prompt = 'アップロードした session.json の instruction に従って、記録版MD（逐語・ファイル内容埋め込み）・uploads.zip・downloads.zip の3つを出力してください。対話は要約せず逐語のままにしてください。';
+                await new Promise(r => setTimeout(r, 1500));
+                const inputEl = document.querySelector(
+                    '[contenteditable="true"].ProseMirror, ' +
+                    'div[contenteditable="true"][data-testid], ' +
+                    'div[contenteditable="true"]'
+                );
+                if (inputEl) {
+                    inputEl.focus();
+                    document.execCommand('selectAll', false, null);
+                    document.execCommand('insertText', false, prompt);
+                    await new Promise(r => setTimeout(r, 300));
+                    const sendBtn = document.querySelector(
+                        'button[aria-label*="送信"], button[aria-label*="Send"], ' +
+                        'button[data-testid*="send"], button[type="submit"]'
+                    );
+                    if (sendBtn) sendBtn.click();
+                    else inputEl.dispatchEvent(new KeyboardEvent('keydown', {
+                        key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true
+                    }));
+                }
+                navigator.clipboard.writeText(prompt).catch(() => {});
+            };
+            runSequence();
+        });
+
+        // --- 最初に: 新規チャット冒頭でアップロードファイルのバージョン同期を依頼 ---
+        createBtn('最初に', '#16a085', () => {
             const prompt =
-                `このセッションのファイルを2つのZIPにまとめてダウンロードしてください。\n\n` +
-                `1. アップロードしたファイルとペーストしたファイルの実体を「${base}_uploads.zip」という名前のZIPに。\n` +
-                `2. あなたがこのセッションで生成したファイルを「${base}_downloads.zip」という名前のZIPに。`;
+                'このチャットでこれからアップロード/ペーストするファイルについてのお願いです。' +
+                '同名のファイルでも上書きせず、バージョン番号を付けて別個のファイルとして扱ってください。' +
+                'ファイルを受け取るたびに、あなたが認識した保存名（例：filename_v1.ext）を応答で明示してください。' +
+                'これは後でセッション全体を正確に記録・参照するための準備です。';
             const inputEl = document.querySelector(
                 '[contenteditable="true"].ProseMirror, ' +
                 'div[contenteditable="true"][data-testid], ' +
@@ -227,8 +301,6 @@
                 }, 300);
             }
             navigator.clipboard.writeText(prompt).catch(() => {});
-            };
-            runSequence();
         });
 
         // --- ガード ON/OFF トグル ---
